@@ -14,7 +14,7 @@ public abstract class Singleton<T> where T : class, new()//使用关键字 new()
                 lock (_synclock)
                 {
                     instance = new T();
-                    Debug.Log("{0}：创建了单例对象" + typeof(T).Name);
+                    Debug.Log("创建了单例对象:" + typeof(T).Name);
                 }
             }
             return instance;

@@ -19,7 +19,7 @@ public class Test : MonoBehaviour
     {
         if (GUI.Button(new Rect(10, 10, 100, 50), ""))
         {
-            LuaManager.Instance.DoString("print('????????????')");
+            LuaManager.Instance.DoString("require 'GameStart'");
         }
     }
 }

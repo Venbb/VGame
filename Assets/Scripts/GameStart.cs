@@ -6,7 +6,7 @@ public class GameStart : MonoBehaviour
 {
     void Awake()
     {
-        LuaManager.Instance.Init();
+        LuaManager.Instance.Init().DoString("require 'GameStart'");
     }
     // Start is called before the first frame update
     void Start()
