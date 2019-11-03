@@ -1,6 +1,7 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using System;
 using XLua;
 
 public class LuaManager : Singleton<LuaManager>
@@ -9,6 +10,9 @@ public class LuaManager : Singleton<LuaManager>
     public LuaEnv luaEnv { get; private set; }
     // 是否初始化
     public bool isInit { get; private set; }
+    // 加载Lua的回调
+    [CSharpCallLua]
+    public delegate byte[] LuaLoader(ref string filepath);
     // 初始化
     public LuaManager Init()
     {
@@ -28,6 +32,17 @@ public class LuaManager : Singleton<LuaManager>
         meta.Dispose();
 
         return table;
+    }
+    // 添加LuaLoader
+    // xlua 通过require加载lua脚本，默认只能加载Resources里面txt格式的lua文件
+    // 这里扩展了xlua的自定义Loader，用来满足加载不同位置和格式以及特殊处理的lua文件
+    // 自定义的loader方法必须返回byte[]数组
+    public void AddLoader(LuaLoader loader)
+    {
+        luaEnv.AddLoader((ref string filepath) =>
+        {
+            return loader(ref filepath);
+        });
     }
     // 执行Lua 脚本
     public void DoString(string chunk)

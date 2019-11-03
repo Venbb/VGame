@@ -1,14 +1,16 @@
 local GameStart = {}
-function GameStart:Init()
-    local luaEnv = CS.LuaManager.Instance.luaEnv
-    luaEnv.AddLoader(self.OnLuaLoad)
-    require("LuaTest")
-end
-function GameStart.OnLuaLoad(filePath)
-    print(filePath)
-    local path = CS.UnityEngine.Application.dataPath .. "/Scripts/Lua/LuaScripts/" .. filePath
+function GameStart.OnLuaLoad(filepath)
+    print(filepath)
+    local path = CS.UnityEngine.Application.dataPath .. "/Scripts/Lua/LuaScripts/" .. filepath .. ".lua"
     return CS.System.IO.File.ReadAllBytes(path)
 end
+function GameStart:Init()
+    CS.LuaManager.Instance:AddLoader(self.OnLuaLoad)
+   local test = require("LuaTest")
+    --require("LuaTest")
+    test:print()
+end
+
 -- 检查更新
 function GameStart:CheckUpdate()
 end
