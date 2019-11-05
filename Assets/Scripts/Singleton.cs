@@ -20,6 +20,7 @@ public abstract class Singleton<T> where T : class, new()//使用关键字 new()
             return instance;
         }
     }
+    public virtual T Init() { return instance; }
 }
 public abstract class MonoSingleton<T> : MonoBehaviour where T : MonoBehaviour
 {

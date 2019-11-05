@@ -14,7 +14,7 @@ public class LuaManager : Singleton<LuaManager>
     [CSharpCallLua]
     public delegate byte[] LuaLoader(ref string filepath);
     // 初始化
-    public LuaManager Init()
+    public override LuaManager Init()
     {
         if (luaEnv == null) luaEnv = new LuaEnv();
         isInit = true;
