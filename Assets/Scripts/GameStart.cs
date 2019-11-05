@@ -7,7 +7,7 @@ public class GameStart : MonoBehaviour
     void Awake()
     {
         LuaManager.Instance.Init().DoString("require 'GameStart'");
-        EventManager.Instance.AddListener<int>((int)CommEvt.COMM_001,(int arg)=>{});
+        EventManager.Instance.AddListener((int)CommEvt.COMM_001,OnCustomEvt);
     }
     // Start is called before the first frame update
     void Start()
@@ -18,10 +18,10 @@ public class GameStart : MonoBehaviour
     {
         if(GUI.Button(new Rect(10,10,100,50),""))
         {
-            EventManager.Instance.Dispatch((int)CommEvt.COMM_001, "kkkkkkkk????",123);
+            EventManager.Instance.DispatchEvent((int)CommEvt.COMM_001, "kkkkkkkk????",123);
         }
     }
-    void OnCustomEvt(int arg)
+    void OnCustomEvt(int type,params object[] param)
     {
         // Debug.Log("GameStart OnCustomEvt" + evt.type + evt.Params);
     }

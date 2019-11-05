@@ -40,17 +40,16 @@ public class CustomEvt : ICustomEvt
         return type + " [ " + ((arg == null) ? "null" : arg.ToString()) + " ] ";
     }
 }
-// public delegate void CustomEvtHandler(params object[] param);
-public delegate void Action<T>();
+public delegate void CustomEvtHandler(int type,params object[] param);
 public interface IEventManager
 {
     bool IsPuase { get; set; }
-    // void AddListener(int type, CustomEvtHandler handler);
+    void AddListener(int type, CustomEvtHandler handler);
     void AddListener<T>(int type, Action<T> handler);
-    // void RemoveListener(int type, CustomEvtHandler handler);
+    void RemoveListener(int type, CustomEvtHandler handler);
     void RemoveListener<T>(int type, Action<T> handler);
-    void Dispatch<T>(int type, T arg);
-    void Dispatch(int type, params object[] param);
+    void DispatchEvent<T>(int type, T arg);
+    void DispatchEvent(int type, params object[] param);
     void Clear();
 }
 public class EventManager : Singleton<EventManager>, IEventManager
@@ -59,28 +58,20 @@ public class EventManager : Singleton<EventManager>, IEventManager
 
     public bool IsPuase { get; set; }
 
-    // public void AddListener(int type, CustomEvtHandler handler)
-    // {
-    //     AddListener(type, handler);
-    // }
-
-    public void AddListener<T>(int type, Action<T> handler)
-    {
-        AddListener(type, handler);
-    }
-    void AddListener(int type, Delegate handler)
+    public void AddListener(int type, CustomEvtHandler handler)
     {
         if (handler == null) return;
         Delegate evtHandler = null;
         listeners.TryGetValue(type, out evtHandler);
         listeners[type] = Delegate.Combine(evtHandler, handler);
     }
-    public void Clear()
+
+    public void AddListener<T>(int type, Action<T> handler)
     {
-        listeners.Clear();
+        AddListener(type, handler);
     }
 
-    public void Dispatch<T>(int type, T arg)
+    public void DispatchEvent<T>(int type, T arg)
     {
         Delegate evtHandler = null;
         if (listeners.TryGetValue(type, out evtHandler))
@@ -89,32 +80,42 @@ public class EventManager : Singleton<EventManager>, IEventManager
         }
     }
 
-    public void Dispatch(int type, params object[] args)
+    public void DispatchEvent(int type, params object[] args)
     {
         Delegate evtHandler = null;
         if (listeners.TryGetValue(type, out evtHandler))
         {
-            evtHandler.DynamicInvoke(args);
+            evtHandler.DynamicInvoke(type,args);
         }
     }
 
-    // public void RemoveListener(int type, CustomEvtHandler handler)
-    // {
-    //     if (handler == null) return;
-    //     Delegate evtHandler = null;
-    //     if (listeners.TryGetValue(type, out evtHandler))
-    //     {
-    //         listeners[type] = Delegate.Remove(evtHandler, handler);
-    //     }
-    // }
+    public void RemoveListener(int type, CustomEvtHandler handler)
+    {
+        RemoveListener(type, handler);
+    }
 
     public void RemoveListener<T>(int type, Action<T> handler)
     {
-           if (handler == null) return;
+        RemoveListener(type, handler);
+    }
+    void AddListener(int type, Delegate handler)
+    {
+        if (handler == null) return;
+        Delegate evtHandler = null;
+        listeners.TryGetValue(type, out evtHandler);
+        listeners[type] = Delegate.Combine(evtHandler, handler);
+    }
+    void RemoveListener(int type, Delegate handler)
+    {
+        if (handler == null) return;
         Delegate evtHandler = null;
         if (listeners.TryGetValue(type, out evtHandler))
         {
             listeners[type] = Delegate.Remove(evtHandler, handler);
         }
+    }
+    public void Clear()
+    {
+        listeners.Clear();
     }
 }
