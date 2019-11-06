@@ -2,7 +2,7 @@
 
 public abstract class Singleton<T> where T : class, new()//使用关键字 new() 限定，必须含有无参构造函数的单例 
 {
-    protected static T instance;
+    private static T instance;
     // 用于lock块的对象,使用 双重锁确保单例在多线程初始化时的线程安全性
     private static readonly object _synclock = new object();
     public static T Instance
@@ -20,7 +20,11 @@ public abstract class Singleton<T> where T : class, new()//使用关键字 new()
             return instance;
         }
     }
-    public virtual T Init() { return instance; }
+    public abstract T Init();
+    public virtual void Dispose()
+    {
+        instance = null;
+    }
 }
 public abstract class MonoSingleton<T> : MonoBehaviour where T : MonoBehaviour
 {

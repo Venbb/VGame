@@ -8,16 +8,10 @@ public class LuaManager : Singleton<LuaManager>
 {
     // Lua 环境
     public LuaEnv luaEnv { get; private set; }
-    // 是否初始化
-    public bool isInit { get; private set; }
-    // 加载Lua的回调
-    [CSharpCallLua]
-    public delegate byte[] LuaLoader(ref string filepath);
     // 初始化
     public override LuaManager Init()
     {
         if (luaEnv == null) luaEnv = new LuaEnv();
-        isInit = true;
         return this;
     }
     // 创建一个LuaTable
@@ -37,12 +31,9 @@ public class LuaManager : Singleton<LuaManager>
     // xlua 通过require加载lua脚本，默认只能加载Resources里面txt格式的lua文件
     // 这里扩展了xlua的自定义Loader，用来满足加载不同位置和格式以及特殊处理的lua文件
     // 自定义的loader方法必须返回byte[]数组
-    public void AddLoader(LuaLoader loader)
+    public void AddLoader(LuaEnv.CustomLoader loader)
     {
-        luaEnv.AddLoader((ref string filepath) =>
-        {
-            return loader(ref filepath);
-        });
+        luaEnv.AddLoader(loader);
     }
     // 执行Lua 脚本
     public void DoString(string chunk)
@@ -50,10 +41,10 @@ public class LuaManager : Singleton<LuaManager>
         luaEnv.DoString(chunk);
     }
     // 销毁Lua
-    public void Dispose()
+    public override void Dispose()
     {
         luaEnv.Dispose();
         luaEnv = null;
-        isInit = false;
+        base.Dispose();
     }
 }

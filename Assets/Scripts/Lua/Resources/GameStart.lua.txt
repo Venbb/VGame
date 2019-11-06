@@ -1,30 +1,40 @@
+function handler(obj, method)
+    return function(...)
+        if obj and method then
+            return method(obj, ...)
+        end
+    end
+end
 local GameStart = {}
-function GameStart.OnLuaLoad(filepath)
+function GameStart:OnLuaLoad(filepath)
     print(filepath)
     local path = CS.UnityEngine.Application.dataPath .. '/AssetsBundle/Scripts/' .. filepath .. '.lua'
     return CS.System.IO.File.ReadAllBytes(path)
 end
 function GameStart:Init()
-    cs_coroutine = require('xlua.cs_coroutine')
-    CS.LuaManager.Instance:AddLoader(self.OnLuaLoad)
-    local time = 10
-    local fun = function() end
-    self.co = cs_coroutine.start(
-    function()
-        while true do
-            print('kkkkkkk')
-            if time > 0 then
-            else
-                print(self.co)
-                cs_coroutine.stop(self.co)
-            end
-            time = time - CS.UnityEngine.Time.deltaTime
-        end
-    end
-    )
-    print(self.co)
+    -- cs_coroutine = require('xlua.cs_coroutine')
+    CS.LuaManager.Instance:AddLoader(handler(self, self.OnLuaLoad))
+    -- local time = 10
+    -- local fun = function() end
+    -- self.co = cs_coroutine.start(
+    -- function()
+    --     while true do
+    --         print('kkkkkkk')
+    --         if time > 0 then
+    --         else
+    --             print(self.co)
+    --             cs_coroutine.stop(self.co)
+    --         end
+    --         time = time - CS.UnityEngine.Time.deltaTime
+    --     end
+    -- end
+    -- )
+    -- print(self.co)
+    CS.EventManager.Instance:AddListener(CS.EventMsg.COMM_001, handler(self, self.OnCustomEvt2));
 end
-
+function GameStart:OnCustomEvt2(id, value)
+    print("??????????????", id, value)
+end
 -- 检查更新
 function GameStart:CheckUpdate()
 end
