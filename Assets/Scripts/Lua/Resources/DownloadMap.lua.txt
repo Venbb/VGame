@@ -1,0 +1,26 @@
+local DownloadMap = {}
+
+DownloadMap.forceUpdateFileMap = {
+    DMM = CS.GlobalConstant.StaticDataPath .. "/app_force_update_version.txt",
+    DMM_PC = CS.GlobalConstant.StaticDataPath .. "/app_force_update_version_DMM_PC.txt",
+    GOOGLE = CS.GlobalConstant.StaticDataPath .. "/app_force_update_version_GOOGLE.txt",
+}
+function DownloadMap.getForceUpdateFilePath()
+    local path = ""
+
+    if CS.GlobalConstant.Platform == 'Android' then
+        if (CS.GlobalConstant.IS_DMM_R or CS.GlobalConstant.IS_DMM) then
+            path = DownloadMap.forceUpdateFileMap.DMM
+        elseif CS.GlobalConstant.IS_GOOGLE then
+            path = DownloadMap.forceUpdateFileMap.GOOGLE
+        end
+    elseif CS.GlobalConstant.Platform == 'StandaloneWindows' then
+        if (CS.GlobalConstant.IS_DMM_R or CS.GlobalConstant.IS_DMM) then
+            path = DownloadMap.forceUpdateFileMap.DMM_PC
+        end
+    end
+    print("<color>force update path: </color>", path)
+    return path
+end
+
+return DownloadMap

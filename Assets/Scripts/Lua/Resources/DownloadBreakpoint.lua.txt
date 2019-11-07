@@ -1,0 +1,94 @@
+local DownloadBreakpoint = {}
+DownloadBreakpoint.rootSavePath = ""
+DownloadBreakpoint.breakpointInfos = {}
+
+local DownloadBreakpointInfo = {}
+DownloadBreakpointInfo.fileName = ""
+DownloadBreakpointInfo.crc = ""
+
+--断点续传文件信息名字
+--文件格式：{文件名字,文件crc}
+local BREAK_POINT_FILE_NAME = "downloadedFiles.ab"
+
+local DownloadUtil = require("DownloadUtil")
+
+-- <summary>
+-- 更新断点续传信息
+-- <param name="fileName">文件名</param>
+-- <param name="crc">crc</param>
+-- </summary>
+function DownloadBreakpoint:UpdateBreakpointInfo(fileName, crc)
+    if (self.rootSavePath == nil or #self.rootSavePath == 0) then
+        CS.UnityEngine.Debug.LogError("DownloadBreakpoint UpdateBreakpointInfo: please call 'DownloadBreakpoint:LoadBreakpointInfo' at first")
+        return
+    end
+
+    local newInfo = {}
+    newInfo.fileName = fileName
+    newInfo.crc = crc
+    self.breakpointInfos[fileName] = newInfo
+end
+
+-- <summary>
+-- 加载断点续传信息
+-- <param name="rootSavePath">信息所在根目录</param>
+-- </summary>
+function DownloadBreakpoint:LoadBreakpointInfo(rootSavePath)
+    self.rootSavePath = rootSavePath
+
+    local fullPath = DownloadUtil:PathCombine(self.rootSavePath, BREAK_POINT_FILE_NAME)
+    if (CS.System.IO.File.Exists(fullPath)) then
+        local readString = CS.System.IO.File.ReadAllText(fullPath)
+        local splitLineStrings = DownloadUtil:SplitString(readString, "\n")
+        for index, value in ipairs(splitLineStrings) do
+            local splitStrings = DownloadUtil:SplitString(value, ",")
+            local newInfo = {}
+            newInfo.fileName = splitStrings[1]
+            newInfo.crc = splitStrings[2]
+            self.breakpointInfos[newInfo.fileName] = newInfo
+        end
+    end
+end
+
+-- <summary>
+-- 保存断点续传信息
+-- </summary>
+function DownloadBreakpoint:SaveBreakpointInfo()
+    if (self.rootSavePath == nil or #self.rootSavePath == 0) then
+        CS.UnityEngine.Debug.LogError("DownloadBreakpoint SaveBreakpointInfo: please call 'DownloadBreakpoint:LoadBreakpointInfo' at first")
+        return
+    end
+
+    local fullPath = DownloadUtil:PathCombine(self.rootSavePath, BREAK_POINT_FILE_NAME)
+    local appendString = ""
+    
+    for key, value in pairs(self.breakpointInfos) do
+        appendString = value.fileName .. "," .. value.crc .. "\n"
+    end
+
+    --删除最后一个多余的换行符
+    if (#appendString > 0) then
+        appendString = string.sub(appendString, 1, -2)
+    end
+
+    CS.System.IO.File.WriteAllText(fullPath, appendString)
+end
+
+-- <summary>
+-- 删除断点续传信息
+-- </summary>
+function DownloadBreakpoint:DeleteBreakpointInfo()
+    if (self.rootSavePath == nil or #self.rootSavePath == 0) then
+        CS.UnityEngine.Debug.LogError("DownloadBreakpoint DeleteBreakpointInfo: please call 'DownloadBreakpoint:LoadBreakpointInfo' at first")
+        return
+    end
+
+    local fullPath = DownloadUtil:PathCombine(self.rootSavePath, BREAK_POINT_FILE_NAME)
+    if (CS.System.IO.File.Exists(fullPath) == false) then
+        return
+    else
+        CS.System.IO.File.Delete(fullPath)
+    end
+end
+
+return DownloadBreakpoint

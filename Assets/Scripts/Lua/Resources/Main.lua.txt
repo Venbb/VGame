@@ -1,0 +1,20 @@
+local Main = {}
+function Main:OnLuaLoad(filepath)
+    local Application = CS.UnityEngine.Application
+    print(filepath)
+    local path = Application.dataPath .. '/AssetsBundle/Scripts/' .. filepath .. '.lua'
+    return CS.System.IO.File.ReadAllBytes(path)
+end
+function Main:Init()
+    require('xlua.cs_coroutine')
+    CS.LuaManager.Instance:AddLoader(function(filepath) self:OnLuaLoad(filepath) end)
+    require('xlua.cs_coroutine')
+end
+-- 检查更新
+function Main:CheckUpdate()
+end
+-- 下载资源
+function Main:DownLoadAssets()
+end
+Main:Init()
+return Main

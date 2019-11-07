@@ -1,0 +1,316 @@
+local DownloadUtil = {}
+
+local ONE_KB = 1024;
+local ONE_MB = 1024 * 1024;
+local ONE_GB = 1024 * 1024 * 1024;
+
+-- <summary>
+-- 连接2个字符串地址，禁用self:PathCombine，因为可能根据平台设定分隔符为\，导致一些平台无法正常使用路径
+-- </summary>
+function DownloadUtil:PathCombine(path1, path2)
+    local retValue = ""
+
+    if (path1 == nil or path1 == "") then
+        retValue = path2
+        return retValue
+    end
+
+    local lastSplitFlag = string.sub(path1, -1)
+
+    --如果path1的结尾换行符是\，则替换为/
+    if (lastSplitFlag == "\\") then
+        retValue = string.gsub(path1, "\\", "/") .. path2
+    --如果path1的结尾不是换行符，则新增一个换行符    
+    elseif (lastSplitFlag ~= "/") then
+        retValue = path1 .. "/" .. path2
+    else
+        retValue = path1 .. path2
+    end
+    return retValue
+end
+
+-- <summary>
+-- 获取堆栈信息
+-- <param name="startStackLevel">堆栈信息开始下标</param>
+-- <param name="maxStackLevel">最大堆栈信息显示层数</param>
+-- <return>堆栈信息(string)</return>
+-- </summary>
+local function GetStackInfo(startStackLevel, maxStackLevel)
+    local retValue = "stack traceback:\n"
+
+    --0表示getinfo本身,1表示调用getinfo的函数(printCallStack),2表示调用printCallStack的函数,可以想象一个getinfo(0级)在顶的栈.
+    startStackLevel = startStackLevel or 3
+
+    --最大递归10层
+    maxStackLevel = maxStackLevel or 10
+
+    for level = startStackLevel, maxStackLevel do
+
+        -- 打印堆栈每一层
+        local info = debug.getinfo( level, "nSl") 
+
+        --获取信息失败跳出循环
+        if info == nil then break end
+
+        retValue = retValue .. "\tline:" .. info.currentline .. " in function " .. (info.name or "nil") .. "("
+
+        -- 打印该层的参数与局部变量
+        local index = 1 --1表示第一个参数或局部变量, 依次类推
+        local hasParam = false
+        while true do
+            local name, value = debug.getlocal( level, index )
+            if name == nil then break end
+
+            local valueType = type( value )
+            local valueStr
+            if valueType == 'string' then
+                valueStr = value
+            elseif valueType == "number" then
+                valueStr = string.format("%.2f", value)
+            end
+            if valueStr ~= nil then
+                retValue = retValue .. string.format("%s=%s ", name, value)
+                hasParam = true
+            end
+            index = index + 1
+        end
+
+        if (hasParam) then
+            retValue = string.sub(retValue, 1, -2)
+        end
+
+        retValue = retValue .. ")\n"
+    end
+
+    return retValue
+end
+
+function DownloadUtil:printcolor(message, color)
+    if (G_isShowLog ~= nil and false == G_isShowLog) then
+        return
+    end
+    color = color or CS.UnityEngine.Color.white 
+    local MakeRichtextLog = function(message, color)
+                                local r = CS.System.Convert.ToString((color.r * 255), 16) if (#r == 1) then r = r .. "0" end
+                                local g = CS.System.Convert.ToString((color.g * 255), 16) if (#g == 1) then g = g .. "0" end
+                                local b = CS.System.Convert.ToString((color.b * 255), 16) if (#b == 1) then b = b .. "0" end
+                                local a = CS.System.Convert.ToString((color.a * 255), 16) if (#a == 1) then a = a .. "0" end
+                                local retValue = CS.System.String.Format("<color=#{0}>{1}</color>", (r .. g .. b .. a), message);
+                                return retValue;
+                            end
+    CS.UnityEngine.Debug.Log("LUA:" .. MakeRichtextLog(message, color) .. "\n" .. GetStackInfo())
+end
+
+function DownloadUtil:printerror(message)
+    if (G_isShowLog ~= nil and false == G_isShowLog) then
+        return
+    end
+    
+    CS.UnityEngine.Debug.LogError("LUA:" .. tostring(message) .. "\n" .. GetStackInfo())
+end
+
+function DownloadUtil:SplitString(inputstr, sep)
+    if sep == nil then
+        sep = "%s"
+    end
+    local t = {}  
+    local i = 1
+    for str in string.gmatch(inputstr, "([^"..sep.."]+)") do
+        t[i] = str
+        i = i + 1
+    end
+    return t
+end
+
+function DownloadUtil:GetTableNums(t)
+    local count = 0
+    for k, v in pairs(t) do
+        count = count + 1
+    end
+    return count
+end
+
+-- <summary>
+-- 格式化文件大小字符串
+-- <param name="fileSize">文件大小(整数))</param>
+-- <return>格式化后的字符串，单位MB</return>
+-- </summary>
+function DownloadUtil:FormatFileSizeString(fileSize)
+    local ret = "";
+
+    if (nil == fileSize) then
+        return ret
+    end
+
+    if (fileSize < ONE_KB) then
+        ret = string.format("%.2f", fileSize) .. " B";
+    elseif (fileSize >= ONE_KB and fileSize < ONE_MB) then
+        ret = string.format("%.2f", (fileSize / ONE_KB)) .. " KB";
+    elseif (fileSize >= ONE_MB and fileSize < ONE_GB) then
+        ret = string.format("%.2f", (fileSize / ONE_MB)) .. " MB";
+    elseif (fileSize >= ONE_GB) then
+        ret = string.format("%.2f", (fileSize / ONE_GB)) .. " GB";
+    else
+        ret = tostring(fileSize)
+    end
+    return ret;
+end
+
+-- <summary>
+-- 写入字符串内容到文件
+-- <param name="fullPath">写入绝对路径</param>
+-- <param name="writeString">写入字符串内容</param>
+-- <return>写入成功返回true，写入失败返回false</return>
+-- </summary>
+function DownloadUtil:WriteFile(fullPath, writeBytes)
+
+    --如果是要显示堆栈信息，需要先将文件解密，否则会因为require调用lua自身的io.read解析加密文件失败
+    if G_isShowTraceback and not ForceLoadAssetAB then
+        writeBytes = CS.shaco.Base.EncryptDecrypt.Decrypt(writeBytes)
+    end
+    CS.System.IO.File.WriteAllBytes(fullPath, writeBytes)
+end
+
+-- <summary>
+-- 读取文件文本数据
+-- <param name="fullPath">文件绝对路径</param>
+-- <return>读取成功返回文件文本数据，反之返回空字符串</return>
+-- </summary>
+function DownloadUtil:ReadFile(fullPath)
+    return CS.shaco.Base.EncryptDecrypt.Decrypt(CS.System.IO.File.ReadAllBytes(fullPath))
+end
+
+-- <summary>
+-- 创建文件夹
+-- <param name="fullPath">文件夹绝对路径</param>
+-- <param name="platformStr">平台字符串</param>
+-- </summary>
+function DownloadUtil:CreateDirectory(fullPath, platformStr)
+    CS.System.IO.Directory.CreateDirectory(fullPath)
+end
+
+-- <summary>
+-- 删除字符串方法，将会比string.gsub在复杂符号字符串删除时候更稳定
+-- <param name="sourceStr">原字符串</param>
+-- <param name="removeStr">需要删除的字符串</param>
+-- <return>删除后的字符串，如果删除失败则返回原字符串</return>
+-- </summary>
+function DownloadUtil:RemoveString(sourceStr, removeStr)
+    local startIndex = string.find(sourceStr, removeStr, 1, true)
+    if (startIndex == nil) then
+        return sourceStr
+    end
+    local endIndex = startIndex + #removeStr
+
+    --截取前后两部分字符串，删除中间指定字符串
+    local frontStr = ''
+    if startIndex > 0 then
+        frontStr = string.sub(sourceStr, 0, startIndex - 1)
+    end
+    local behindStr = ''
+    if endIndex < #sourceStr then
+        behindStr = string.sub(sourceStr, endIndex, -1)
+    end
+    return frontStr .. behindStr
+end
+
+function string.StartWith(str, start)
+   return string.sub(str, 1, string.len(start)) == start
+end
+function string.EndWith(str, endStr)
+   return endStr =='' or string.sub(str, -string.len(endStr)) == endStr
+end
+
+function print(...)
+    -- if true then return end
+    if (G_isShowLog ~= nil and false == G_isShowLog) then
+        return
+    end
+
+    local message = ""
+    local args = { ... }
+
+    for index, value in ipairs(args) do
+        message = message .. tostring(value) .. "\t"
+    end
+    CS.UnityEngine.Debug.Log("LUA:" .. message .. GetStackInfo())
+end
+
+--下载或者从读取本地一个文件
+--url: 下载地址或者本地路径
+--callbackEnd: 下载结束回调，参数为字符串
+function DownloadUtil.DownloadOrCacheFileString(url, callbackEnd)
+    if (nil == callbackEnd or nil == url or #url == 0) then
+        printerror("DownloadUtil DownloadOrCacheFileString error: param is nil")
+        return
+    end
+
+    print("DownloadUtil DownloadOrCacheFileString url=" .. url)
+
+    if string.StartWith(url, "http") or string.StartWith(url, "file://") then
+        local cs_coroutine = require ("cs_coroutine")
+        cs_coroutine.start(function()
+            
+            --为了防止拉取到服务器缓存问题，在url后面再加一个随机数
+            if (string.StartWith(url, "http")) then
+                url = url .. "?rand=" .. tostring(os.time())
+            end
+
+            local www = CS.UnityEngine.WWW(url)
+            while not www.isDone do
+                coroutine.yield(nil)
+            end
+
+            --如果返回内容发现了404字符相关字符串则判定为下载失败
+            if (string.find(www.text, "404 Not Found") ~= nil) then
+                CS.UnityEngine.Debug.LogError("DownloadUtil DownloadOrCacheFileString error: not found url=" .. tostring(url))
+                callbackEnd(nil)
+            else
+                callbackEnd(www.text)
+            end
+
+        end)
+    else
+        local readString = DownloadUtil:ReadFile(url)
+        callbackEnd(readString)
+    end
+end
+
+--比较2个版本号大小
+--返回值-1 version1 < version2
+--返回值0  version1 == version2
+--返回值1  version1 > version2
+function DownloadUtil.CompareVersion(version1, version2, splitFlag)
+    local retValue = 0
+
+    splitFlag = splitFlag and nil or '.'
+    local splitVersionCode1 = DownloadUtil:SplitString(version1, splitFlag)
+    local splitVersionCode2 = DownloadUtil:SplitString(version2, splitFlag)
+
+    --从高到低依次比对版本大小
+    local versionCodeLen1 = #splitVersionCode1
+    local versionCodeLen2 = #splitVersionCode2
+    
+    if (versionCodeLen1 > versionCodeLen2) then
+        retValue = 1
+    elseif (versionCodeLen1 < versionCodeLen2) then
+        retValue = -1
+    else
+        for i = 1, versionCodeLen1 do
+            local versionCode1 = tonumber(splitVersionCode1[i])
+            local versionCode2 = tonumber(splitVersionCode2[i])
+
+            if (versionCode1 > versionCode2) then
+                retValue = 1
+                break
+            elseif (versionCode1 < versionCode2) then
+                retValue = -1
+                break
+            end
+        end
+    end
+
+    return retValue
+end
+
+return DownloadUtil

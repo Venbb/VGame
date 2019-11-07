@@ -1,0 +1,604 @@
+local DownloadAllAssetbundle = { }
+
+--断点下载数据处理对象
+DownloadAllAssetbundle.downloadBreakpoint = require("DownloadBreakpoint")
+--每下载多少个文件自动同步和保存一次断点续传数据
+DownloadAllAssetbundle.autoSaveBreakpointInfoWhenDownloadedCount = 5
+--当前下载文件数量
+DownloadAllAssetbundle.currentDownloadedFileCount = 0
+--平台信息
+DownloadAllAssetbundle.platformStr = ""
+--是否下载并自动保存ab包
+DownloadAllAssetbundle.isAutoSaveAssetbunleAsFileWhenDownloaded = true
+--最大重连次数
+DownloadAllAssetbundle.maxReconnectCount = 3
+--下载csv配置文件所占整个进度条的百分比(范围0 ~ 1)
+DownloadAllAssetbundle.downloadCsvConfigPercentInAllProgress = 0.1
+
+local DownloadUtil = require("DownloadUtil")
+local cs_coroutine = require("cs_coroutine")
+
+local UpdateFileInfo = {}
+UpdateFileInfo.fileName = ""
+UpdateFileInfo.version = ""
+UpdateFileInfo.crc = ""
+UpdateFileInfo.fileSize = 0
+function UpdateFileInfo:new()
+    local newInfo = { }
+    self.__index = self
+    setmetatable(newInfo, self)
+    return newInfo
+end
+
+-- <summary>
+-- 仅下载lua脚本文件方法
+-- <param name="rootUrl">资源更新地址</param>
+-- <param name="rootSavePath">保存资源根目录</param>
+-- <param name="platformStr">平台信息字符串，用于格式化路径</param>
+-- <param name="callbackProgress">更新进度回调(下载进度(范围0~1)，已下载文件大小，总文件大小)</param>
+-- <param name="callbackEnd">检查并更新资源完毕回调(下载的csv文件字符串)</param>
+-- </summary>
+function DownloadAllAssetbundle:CheckAllLuaScriptsUpdate(csvRootUrl,rootUrl, rootSavePath, platformStr, callbackProgress, callbackEnd)
+    self:CheckAllResourcesUpdate(csvRootUrl,rootUrl, rootSavePath, platformStr, callbackProgress, callbackEnd, "lua_scripts") 
+end
+
+-- <summary>
+-- 检查所有资源更新，支持本次测试和服务器下载
+-- <param name="rootUrl">资源更新地址</param>
+-- <param name="rootSavePath">保存资源根目录</param>
+-- <param name="platformStr">平台信息字符串，用于格式化路径</param>
+-- <param name="callbackProgress">更新进度回调(下载进度(范围0~1)，已下载文件大小，总文件大小)</param>
+-- <param name="callbackEnd">检查并更新资源完毕回调(下载的csv文件字符串)</param>
+-- <param name="selectFileFlag">指定的目标文件名字标记，如果设置了该值，则只会更新包含有该标记的文件内容</param>
+-- </summary>
+function DownloadAllAssetbundle:CheckAllResourcesUpdate(csvRootUrl,rootUrl, rootSavePath, platformStr, callbackProgress, callbackEnd, selectFileFlag)
+
+    --初始化随机数种子
+    math.randomseed(os.time())
+
+    self.currentDownloadedFileCount = 0
+    self.platformStr = platformStr
+
+    --开启下载协程
+    cs_coroutine.start(function()
+        local isDownloadCsvEnd = false
+        local pathServerCsv = self:GetCsvFullPath(rootSavePath) .. "_tmpserver"
+        local pathLocalCsv = self:GetCsvFullPath(rootSavePath)
+        local serverCrcCsvResultString = ""
+
+        --下载csv文件
+        self:LoadFromCacheOrDownloadCsv(csvRootUrl, function(resultBytes)
+        
+            if (nil == resultBytes) then
+                DownloadUtil:printerror("DownloadAllAssetbundle CheckAllResourcesUpdate erorr: can't download csv, root url=" .. rootUrl)
+                return
+            else
+                self:CheckFolderPathWithAutoCreate(pathServerCsv)
+                resultBytes = CS.shaco.Base.EncryptDecrypt.Decrypt(resultBytes)
+                serverCrcCsvResultString = CS.FuncHelperUtil.getInstance():BytesToString(resultBytes)
+                DownloadUtil:WriteFile(pathServerCsv, serverCrcCsvResultString)
+                isDownloadCsvEnd = true
+            end
+        end, function(progressPercent)
+
+            --计算下载csv文件进度
+            if nil ~= callbackProgress then
+                callbackProgress(self.downloadCsvConfigPercentInAllProgress * progressPercent, nil, nil)
+            end
+        end)
+
+        --等待下载csv完毕
+        while (false == isDownloadCsvEnd) do coroutine.yield(nil) end
+
+        --比对本地和刚才下载的csv文件，计算需要更新的文件内容
+        local localCrcCsvResultString = ""
+        if (self:ExistsFileOrDirectory(pathLocalCsv)) then
+            localCrcCsvResultString = DownloadUtil:ReadFile(pathLocalCsv)
+        end
+        local needupdateFiles, needDeleteFiles = self:SelectNeedUpdateFiles(serverCrcCsvResultString, localCrcCsvResultString, pathLocalCsv, selectFileFlag)
+        
+        --没有文件内容需要更新，立即返回
+        if (needupdateFiles == nil or DownloadUtil:GetTableNums(needupdateFiles) == 0) then
+            DownloadUtil:printcolor("DownloadAllAssetbundle: noting need update")
+            if (nil ~= callbackEnd) then
+                callbackEnd(serverCrcCsvResultString)
+            end
+            return
+        end
+
+        local totalDownloadNum = DownloadUtil:GetTableNums(needupdateFiles)
+        
+        --打印更新文件数量
+        DownloadUtil:printcolor("DownloadAllAssetbundle: will update ab count=" .. tostring(totalDownloadNum))
+
+        --加载断点续传数据
+        self.downloadBreakpoint:LoadBreakpointInfo(rootSavePath)
+
+        -- 监听更新进度回调事件
+        local callbackDownloadProgress = function(progressPercent, downloadedSize, totalSize)
+
+            if (nil ~= callbackProgress) then
+                callbackProgress((1 - self.downloadCsvConfigPercentInAllProgress) * progressPercent + self.downloadCsvConfigPercentInAllProgress, downloadedSize, totalSize)
+            end
+
+            --下载完毕
+            if (progressPercent >= 1.0) then
+
+                --用临时下载的csv文件替换旧的本地csv
+                if (self:ExistsFileOrDirectory(pathLocalCsv)) then
+                    os.remove(pathLocalCsv)
+                end
+                
+                os.rename(pathServerCsv, pathLocalCsv)
+                DownloadUtil:printcolor("DownloadAllAssetbundle: completed... overwrite crc csv path=" .. pathLocalCsv)
+
+                --删除断点下载数据
+                self.downloadBreakpoint:DeleteBreakpointInfo()
+            end
+        end
+
+        --监听单个文件更新完成事件
+        local callbackOnceEnd = function(savePath, assetbundle,fileName)
+            --如果是lua文件需要解压到当前目录
+            if (nil ~= assetbundle and string.find(fileName, "lua_scripts") ~= nil) then
+                self:UnCompressLuaAssetbundle(savePath, assetbundle)
+            end
+            if totalDownloadNum == self.currentDownloadedFileCount then
+                if (nil ~= callbackEnd) then
+                    callbackEnd(serverCrcCsvResultString)
+                end
+            end
+        end
+
+        --开始下载
+        self:DownloadStart(rootUrl, rootSavePath, needupdateFiles, callbackDownloadProgress, callbackOnceEnd)
+
+        --删除弃用的旧文件
+        for key, value in pairs(needDeleteFiles) do
+            local fullSavePath = DownloadUtil:PathCombine(rootSavePath, key)
+            DownloadUtil:printcolor("delete file, path=" .. fullSavePath)
+        end
+    end)
+end
+
+-- <summary>
+-- 下载更新资源文件所用的crc配置文件
+-- <param name="rootUrl">下载根目录</param>
+-- <param name="callbackEnd">下载完毕回调{参数：csv文件二进制数据}</param>
+-- <param name="callbackProgress">更新进度回调(下载进度(范围0~1))</param>
+-- </summary>
+function DownloadAllAssetbundle:LoadFromCacheOrDownloadCsv(rootUrl, callbackEnd, callbackProgress)
+
+    cs_coroutine.start(function()
+        local fullUrlTmp = self:GetCsvFullPath(rootUrl)
+
+        --开始下载csv
+        if (nil == string.find(fullUrlTmp, "file://")) then
+            fullUrlTmp = fullUrlTmp .. '?t='..os.time()
+        end
+        self:LoadFromCacheOrDownload(
+            function()
+                return CS.UnityEngine.WWW(fullUrlTmp)
+            end, 
+            function(www)
+                callbackEnd(www.bytes)
+            end, callbackProgress)
+    end)
+end
+
+-- <summary>
+-- 获取csv文件的绝对路径
+-- <param name="rootPath">根目录</param>
+-- </summary>
+function DownloadAllAssetbundle:GetCsvFullPath(rootPath)
+    local relativePath = "AB_CRC_" .. self.platformStr .. ".csv"
+    local retValue = DownloadUtil:PathCombine(rootPath, relativePath)
+    return retValue
+end
+
+-- <summary>
+-- 获取需要被更新的文件列表
+-- <param name="stringServerCsv">从服务器下载的csv文件字符串</param>
+-- <param name="stringLocalCsv">本地缓存中的csv文件字符串</param>
+-- <param name="pathLocalCsv">本地缓存中的csv绝对路径</param>
+-- <return>更新文件列表{文件路径, {版本号，crc，文件大小}}, 删除文件列表{文件路径, {版本号，crc，文件大小}}</return>
+-- <param name="selectFileFlag">指定的目标文件名字标记，如果设置了该值，则只会更新包含有该标记的文件内容</param>
+-- </summary>
+function DownloadAllAssetbundle:SelectNeedUpdateFiles(stringServerCsv, stringLocalCsv, pathLocalCsv, selectFileFlag)
+
+    local needUpdateFiles = {}
+    local needDeleteFiles = {}
+    local readCsvServerInfo = self:ReadCrcCSVFromString(stringServerCsv)
+    local readCsvLocalInfo = self:ReadCrcCSVFromString(stringLocalCsv)
+    local localRootPath = self:GetFolderNameByPath(pathLocalCsv)
+    local serverInfoCount = DownloadUtil:GetTableNums(readCsvServerInfo)
+    local localInfoCount = DownloadUtil:GetTableNums(readCsvLocalInfo)
+
+    DownloadUtil:printcolor("csv(server) count=" .. serverInfoCount)
+    DownloadUtil:printcolor("csv(local) count=" .. localInfoCount)
+
+    --读取服务器的csv文件失败，或者文件内容为空直接返回
+    --没有任何文件需要更新
+    if readCsvServerInfo == nil or 0 == serverInfoCount then
+        return needUpdateFiles
+    end
+
+    --比对服务器与本地保存的文件列表文件，将需要更新的文件加入文件更新列表中
+    for key, value in pairs(readCsvServerInfo) do
+
+        --本次判断是否更新的标记
+        local needUpdate = false
+
+        --只处理有效的信息字段
+        while (key ~= nil and #key > 0) do
+            local serverFileInfo = value
+            local localFileInfo = readCsvLocalInfo[key]
+
+            --如果设定了更新筛选文件名标记，除此标记外的文件不会计算更新
+            if (nil ~= selectFileFlag and 0 < #selectFileFlag) then
+                local findIndexTmp = string.find(key, selectFileFlag)
+                if (nil == findIndexTmp) then
+                    break
+                end
+            end
+
+            --服务器没有，本地有的文件，需要删除本地文件
+            if (nil ~= localFileInfo and nil == serverFileInfo) then
+                needDeleteFiles[key] = value
+                break
+            end
+
+            --服务器有，本地没有的文件，需要更新
+            if (nil ~= serverFileInfo and nil == localFileInfo) then
+                needUpdate = true
+                break
+            end
+
+            --本地配置中存在的文件信息，实际文件丢失，需要更新
+            local fileName = CS.System.IO.Path.GetFileName(key);
+            local fullAssetBundlePath = DownloadUtil:PathCombine(localRootPath, CS.FuncHelperUtil.getInstance():GetMD5WithString(fileName))
+            if (nil ~= localFileInfo and false == self:ExistsFileOrDirectory(fullAssetBundlePath)) then
+                needUpdate = true
+                break
+            end
+
+            --服务器版本大于本地版本，需要更新
+            local serverVersion = serverFileInfo.version
+            local localVersion = localFileInfo.version
+
+            if (serverFileInfo == nil or localVersion == nil) then
+                DownloadUtil:printerror("DownloadAllAssetbundle invalid param: key=" .. key .. " serverVersion=" .. tostring(serverVersion) .. " localVersion=" .. tostring(localVersion))
+                break
+            end
+
+            if (serverVersion > localVersion) then
+                needUpdate = true
+                break
+            end
+
+            --获取单个文件的crc
+            local serverCrc = serverFileInfo.crc
+            local localCrc = localFileInfo.crc
+
+            --crc可能存在空白字段，自动去除
+            serverCrc = string.gsub(serverCrc, "%s+", "")
+            localCrc = string.gsub(localCrc, "%s+", "")
+
+            if (serverCrc == nil or localCrc == nil) then
+                DownloadUtil:printerror("DownloadAllAssetbundle invalid param: key=" .. key .. " serverCrc=" .. tostring(serverCrc) .. " localCrc=" .. tostring(localCrc))
+                break
+            end
+
+            --服务器与本地crc不一致，需要更新
+            if (serverCrc ~= localCrc) then
+                needUpdate = true
+                break;
+            end
+
+            --默认跳出循环，切记不可删除或者注释该行
+            break
+        end
+        
+        if true == needUpdate then
+            needUpdateFiles[key] = value
+        end
+    end
+
+    return needUpdateFiles, needDeleteFiles;
+end
+
+-- <summary>
+-- 读取crc更新配置文件内容
+-- <param name="pathServerCsv">从服务器下载的csv文件绝对路径</param>
+-- <return>crc文件内容{string, UpdateFileInfo}</return>
+-- </summary>
+function DownloadAllAssetbundle:ReadCrcCSVFromString(csvString)
+    local retValue = { }
+
+    --没有找到文件直接返回
+    if (nil == csvString or 0 == #csvString) then
+        return retValue
+    end
+
+    --读取每行csv内容
+    local readStringLines = DownloadUtil:SplitString(csvString, "\n")
+    for index, value in ipairs(readStringLines) do
+        
+        local readStringOneLine = DownloadUtil:SplitString(value, ",")
+        local abFileNameTmp = readStringOneLine[1]
+
+        if (nil ~= abFileNameTmp and 0 < #abFileNameTmp) then
+            local versionTmp = readStringOneLine[2]
+            local crcTmp = readStringOneLine[3]
+            local fileSizeTmp = readStringOneLine[4]
+
+            local newUpdateInfo = {}
+            newUpdateInfo.fileName = abFileNameTmp
+            newUpdateInfo.version = versionTmp
+            newUpdateInfo.crc = crcTmp
+            newUpdateInfo.fileSize = fileSizeTmp
+            retValue[abFileNameTmp] = newUpdateInfo
+        end
+    end
+
+    return retValue
+end
+
+-- <summary>
+-- 开始批量下载assetbundle
+-- <param name="rootUrl">资源根目录地址</param>
+-- <param name="rootSavePath">资源保存根目录地址</param>
+-- <param name="updateABList">更新文件列表{文件路径, {版本号，crc，文件大小}}</param>
+-- <param name="callbackProgress">更新进度回调(下载进度(范围0~1)，已下载文件大小，总文件大小)</param>
+-- <param name="callbackOnceEnd">更新完毕一个文件回调{文件保存路径，二进制数据}</param>
+-- </summary>
+function DownloadAllAssetbundle:DownloadStart(rootUrl, rootSavePath, updateABList, callbackProgress, callbackOnceEnd)
+
+    local DownloadAssetBundleBySequeue = function()
+        if #rootUrl == 0 or #rootSavePath == 0 then
+            DownloadUtil:printerror("DownloadAllAssetBundle download error: invalid path, rootUrl=" .. rootUrl .. " rootSavePath=" .. rootSavePath)       
+            return
+        end
+
+        if (nil == rootSavePath or 0 == #rootSavePath) then
+            DownloadUtil:printerror("DownloadAllAssetbundle download error: invalid path")  
+            return
+        end
+
+        if (false == self:ExistsFileOrDirectory(rootSavePath)) then
+            DownloadUtil:printerror("DownloadAllAssetbundle download error: not found rootSavePath=" .. rootSavePath)       
+            return
+        end
+
+        --获取所有需要下载文件大小
+        local totalNeedDownloadSize = 0
+        for key, value in pairs(updateABList) do
+            local fileSize = value.fileSize
+            if (nil == key or nil == fileSize) then
+                DownloadUtil:printerror("DownloadAllAssetbundle download error: missing key or file size, will be removed, path=" .. key)
+            else
+                totalNeedDownloadSize = totalNeedDownloadSize + value.fileSize
+            end
+        end
+
+        DownloadUtil:printcolor("DownloadAllAssetbundle will start download up count=" .. DownloadUtil:GetTableNums(updateABList))
+
+        local downloadedSize = 0
+        for key, value in pairs(updateABList) do
+
+            if (nil ~= key and 0 < #key) then
+                local fileNameTmp = key
+                local fileName = fileNameTmp
+                local helper = CS.FuncHelperUtil.getInstance()
+                fileNameTmp = helper:GetMD5WithString(fileNameTmp)
+                local fullUrlTmp = DownloadUtil:PathCombine(rootUrl, fileNameTmp)
+                local fileSizeTmp = value.fileSize or 0
+                local saveFullPath = DownloadUtil:PathCombine(rootSavePath, fileNameTmp)
+                local prevProgressPercent = 0;
+                local isDownloadFileEnd = false
+                
+                --开始下载or加载资源
+                self:LoadFromCacheOrDownload(
+                function()
+                    local wwwTmp = nil
+                    if (self.isAutoSaveAssetbunleAsFileWhenDownloaded) then
+                        if (nil == string.find(fullUrlTmp, "file://")) then
+                            fullUrlTmp = fullUrlTmp .. "?rand=" .. tostring(math.random())
+                        end
+                        wwwTmp = CS.UnityEngine.WWW(fullUrlTmp)
+                    else
+                        wwwTmp = CS.UnityEngine.WWW.LoadFromCacheOrDownload(fullUrlTmp, tonumber(value.version))
+                    end
+                    return wwwTmp
+                end, 
+                function(www)
+                    if (nil ~= www.error) then
+                        DownloadUtil:printerror("DownloadAllAssetbundle download error: " .. www.error)
+                        callbackOnceEnd(saveFullPath, nil)
+                        return
+                    end
+
+                    isDownloadFileEnd = true
+
+                    self.currentDownloadedFileCount = self.currentDownloadedFileCount + 1
+
+                    --需要保存保存到本地，因为临时出版本，暂时只保留lua脚本的解压下载，其他文件下载保存功能之后再做
+                    if (self.isAutoSaveAssetbunleAsFileWhenDownloaded) then
+                        self:CheckFolderPathWithAutoCreate(saveFullPath)
+                        DownloadUtil:WriteFile(saveFullPath, www.bytes)
+                    end
+
+                    if (callbackOnceEnd) then
+                        callbackOnceEnd(saveFullPath, www.assetBundle,fileName)
+                    end
+
+                     --记录单个文件下载完毕
+                     self.downloadBreakpoint:UpdateBreakpointInfo(fileNameTmp,  value.crc)
+                     
+                    --到达断点续传自动保存数量，保存数据
+                    if (self.currentDownloadedFileCount % self.autoSaveBreakpointInfoWhenDownloadedCount == 0) then
+                        self.downloadBreakpoint:SaveBreakpointInfo()
+                    end
+                end, function(progressPercent)
+                    --计算本次下载到的文件大小
+                    local currentDownloadSize = (progressPercent - prevProgressPercent) * fileSizeTmp;
+                    prevProgressPercent = progressPercent;
+                    downloadedSize = downloadedSize + currentDownloadSize;
+
+                    if (callbackProgress) then
+                        callbackProgress(downloadedSize / totalNeedDownloadSize, downloadedSize, totalNeedDownloadSize)
+                    end
+                end)
+
+                --等待上一个文件下载完毕
+                while (isDownloadFileEnd == false) do
+                    coroutine.yield(nil)
+                end
+            end
+        end 
+    end
+
+    DownloadUtil:printcolor("DownloadAllAssetbundle: will start download need update assetbundles")
+
+    --开始通过协程下载ab包
+    cs_coroutine.start(DownloadAssetBundleBySequeue)
+end
+
+-- <summary>
+-- 根据路径获取文件夹名字 
+-- <param name="path">路径</param>
+-- <return>文件夹名字</return>
+-- </summary>
+function DownloadAllAssetbundle:GetFolderNameByPath(path)
+
+    local ts = string.reverse(path)
+	local _, i = string.find(ts, "/")
+	local m = string.len(ts) - i
+    local directoryPath = string.sub(path, 1, m)
+    return directoryPath
+end
+
+-- <summary>
+-- 检查文件夹是否存在，如果不存在则自动创建
+-- <param name="path">文件路径</param>
+-- </summary>
+function DownloadAllAssetbundle:CheckFolderPathWithAutoCreate(path)
+    local directoryPath = self:GetFolderNameByPath(path)
+    if (not self:ExistsFileOrDirectory(directoryPath)) then
+        DownloadUtil:CreateDirectory(directoryPath, self.platformStr)
+    end
+end
+
+-- <summary>
+-- 下载单个文件
+-- <param name="callbackCreateWWW">下载对象创建方法</param>
+-- <param name="calbackEnd">下载完成回调{下载对象}</param>
+-- <param name="callbackProgress">更新进度回调{下载进度(范围0~1)}</param>
+-- <param name="currentReConnectCount">当前重连次数，默认为0</param>
+-- </summary>
+function DownloadAllAssetbundle:LoadFromCacheOrDownload(callbackCreateWWW, callbackEnd, callbackProgress, currentReConnectCount)
+
+    currentReConnectCount = currentReConnectCount or 0
+    local www = callbackCreateWWW()
+    DownloadUtil:printcolor("DownloadAllAssetbundle LoadFromCacheOrDownload: start url=" .. www.url, CS.UnityEngine.Color.green)
+    cs_coroutine.start(function()
+
+        -- local www = CS.UnityEngine.Networking.UnityWebRequest.Get(fullUrl);
+
+        --等待下载资源
+        local progressPercetTmp = www.progress
+        while not www.isDone do
+            if (callbackProgress) then
+                progressPercetTmp = www.progress
+                if (progressPercetTmp >= 1) then
+                    progressPercetTmp = 0.99
+                end
+                callbackProgress(progressPercetTmp)
+            end
+            coroutine.yield(nil)
+        end
+
+        DownloadUtil:printcolor("DownloadAllAssetbundle LoadFromCacheOrDownload: end url=" .. www.url, CS.UnityEngine.Color.blue)
+
+        --出现错误
+        if www.error ~= nil and #www.error > 0 then	
+            
+            --小于最大重试次数，开始重连
+            if (currentReConnectCount + 1 < self.maxReconnectCount) then
+                currentReConnectCount = currentReConnectCount + 1
+
+                print("DownloadAllAssetBundle LoadFromCacheOrDownload: will reconnect, url=" .. www.url .. " retry count=" .. tostring(currentReConnectCount))
+                self:LoadFromCacheOrDownload(callbackCreateWWW, callbackEnd, callbackProgress, currentReConnectCount)
+            --重试超过次数，停止重连
+            else
+                DownloadUtil:printerror("DownloadAllAssetBundle LoadFromCacheOrDownload error: url=" .. www.url .. "\nerror=" .. www.error)
+                callbackEnd(nil)
+            end
+            
+        --下载成功
+        else
+            callbackEnd(www)
+        end
+
+        --下载进度100%
+        if (callbackProgress) then
+            callbackProgress(1.0)
+        end
+    end)
+end
+
+-- <summary>
+-- 解压lua assetbundle文件到本地下载目录
+-- <param name="assetbundleFullPath">ab包绝对路径</param>
+-- </summary>
+function DownloadAllAssetbundle:UnCompressLuaAssetbundle(assetbundleFullPath, assetbundleBytes)
+
+    if (nil == assetbundleBytes) then
+        DownloadUtil:printerror("DownloadAllAssetbundle UnCompressLuaAssetbundle erorr: invalid bytes")
+        return
+    end
+
+    if (assetbundleBytes == nil) then
+        DownloadUtil:printerror("DownloadAllAssetbundle UnCompressLuaAssetbundle error: can't read assetbundle, path=" .. assetbundleFullPath)
+        return
+    end
+
+    local allAssetsInAssetbudnle = assetbundleBytes:LoadAllAssets();
+    if (nil == allAssetsInAssetbudnle or allAssetsInAssetbudnle.Length == 0) then
+        DownloadUtil:printerror('DownloadAllAssetbundle UnCompressLuaAssetbundle error: ab is null, path=' .. assetbundleFullPath .. ' allAssetsInAssetbudnle=' .. tostring(allAssetsInAssetbudnle))
+        return
+    end
+
+    --保存解压ab包路径
+    local saveFolderPath = self:GetFolderNameByPath(assetbundleFullPath)
+
+    --读取assetbundle名字
+    local allAssetsNames = assetbundleBytes:GetAllAssetNames()
+    
+    --读取assetbundle所有脚本文件
+    for i = 0, allAssetsInAssetbudnle.Length - 1 do
+        
+        --从Object中获取文本内容
+        local luaText = allAssetsInAssetbudnle[i].bytes
+
+        --获得需要写入的lua文件绝对路径
+        local assetNameTmp = allAssetsNames[i];
+        local writeLuaFulPath = saveFolderPath .. '/Scripts/' .. string.gsub(string.gsub(assetNameTmp, 'assets/assetbundle/scripts', ''), ".bytes", '')
+        local writeFolderPath = self:GetFolderNameByPath(writeLuaFulPath)
+        self:CheckFolderPathWithAutoCreate(writeLuaFulPath)
+        
+        --将读取到的lua文件写入到本地下载目录
+        DownloadUtil:WriteFile(writeLuaFulPath, luaText)
+    end
+end
+
+-- <summary>
+-- 判断文件或者文件夹是否存在
+-- <param name="fullPath">文件绝对路径</param>
+-- <return>文件存在返回true，反之返回false</return>
+-- </summary>
+function DownloadAllAssetbundle:ExistsFileOrDirectory(fullPath)
+    return CS.System.IO.File.Exists(fullPath) or CS.System.IO.Directory.Exists(fullPath)
+end
+
+return DownloadAllAssetbundle

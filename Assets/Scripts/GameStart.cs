@@ -7,7 +7,7 @@ public class GameStart : MonoBehaviour
     void Awake()
     {
         EventManager.Instance.Init();
-        LuaManager.Instance.Init().DoString("require 'GameStart'");
+        LuaManager.Instance.Init().DoString("require 'Main'");
 
         EventManager.Instance.AddListener(EventMsg.COMM_001, OnCustomEvt1);
         EventManager.Instance.AddListener(EventMsg.COMM_002, OnCustomEvt2);
@@ -43,9 +43,9 @@ public class GameStart : MonoBehaviour
     {
         // LuaManager.Instance.luaEnv.Tick();
     }
-    void OnApplicationQuit()
-    {
-        EventManager.Instance.Dispose();
-        LuaManager.Instance.Dispose();
-    }
+    // void OnApplicationQuit()
+    // {
+    //     EventManager.Instance.Dispose();
+    //     LuaManager.Instance.Dispose();
+    // }
 }
