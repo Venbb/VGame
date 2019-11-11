@@ -45,7 +45,7 @@ namespace Gamekit2D
  
         void RecursiveTreeParsing(Branch branch, int indent, bool parentIsActive)
         {
-            List<BTNode> nodes = branch.Children();
+            List<BTAI.BTNode> nodes = branch.Children();
  
             for (int i = 0; i < nodes.Count; ++i)
             {
