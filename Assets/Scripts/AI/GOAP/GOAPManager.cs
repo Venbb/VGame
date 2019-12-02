@@ -2,7 +2,7 @@
 public class GOAPManager
 {
     public GOAPAgent agent { get; }
-    List<GOAPGoal> mGoals = new List<GOAPGoal>();
+    private List<GOAPGoal> mGoals = new List<GOAPGoal>();
     public GOAPGoal curGoal { get; private set; }
     public GOAPManager(GOAPAgent agent)
     {
@@ -16,24 +16,31 @@ public class GOAPManager
 
         }
         else
-            StopCurGoal();
+        {
+            curGoal.Deactivate();
+            curGoal = null;
+        }
     }
-    public GOAPGoal AddGoal()
+    private void FindGoal()
+    {
+        
+    }
+    public GOAPPlan GetPlan(GOAPGoal goal)
     {
         return null;
     }
-    public void Reset()
+    public void AddGoal(GOAPGoal goal)
     {
-        StopCurGoal();
-        for (int i = 0; i < mGoals.Count; i++)
-            mGoals[i].Reset();
+        if (!mGoals.Contains(goal)) mGoals.Add(goal);
     }
-    private void StopCurGoal()
+    public void Reset()
     {
         if (curGoal != null)
         {
-            curGoal.Stop();
+            curGoal.Deactivate();
             curGoal = null;
         }
+        for (int i = 0; i < mGoals.Count; i++)
+            mGoals[i].Reset();
     }
 }
